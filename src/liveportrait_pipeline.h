@@ -46,13 +46,17 @@ private:
     void* t_s;
     void* scale_s;
 
+    // Source ratios
+    void* gpu_eye_ratio_s;
+    void* gpu_lip_ratio_s;
+
     // Source values (CPU)
     float s_pitch_deg, s_yaw_deg, s_roll_deg;
     float s_t[3];
     float s_scale;
     float R_s[9];
 
-    // Driving Reference (Frame 0) - Now Instance Members
+    // Driving Reference (Frame 0)
     bool is_first_frame;
     float d_0_pitch_deg, d_0_yaw_deg, d_0_roll_deg;
     float d_0_t[3];
@@ -61,6 +65,7 @@ private:
 
     // Driving frame buffers (Device)
     void* gpu_input_motion_d;
+    void* gpu_input_landmark_d;
     void* x_d; 
     void* exp_d;
     void* scale_d;
@@ -70,9 +75,14 @@ private:
     void* t_d;
 
     // Landmark buffers
-    void* gpu_lmk_d;
-    void* gpu_eye_ratio;
-    void* gpu_lip_ratio;
+    void* gpu_lmk_d_out1; // "output" (214)
+    void* gpu_lmk_d_out2; // "853" (262)
+    void* gpu_lmk_d_out3; // "856" (406) - The real landmarks
+    
+    void* gpu_eye_ratio_d;
+    void* gpu_lip_ratio_d;
+    void* gpu_eye_ratio_combined;
+    void* gpu_lip_ratio_combined;
 
     // Final transformation buffers (Device)
     void* gpu_R_final;
@@ -91,6 +101,7 @@ private:
 
     // Profiling
     cudaEvent_t ev_start, ev_end;
+    int frame_count;
 };
 
 #endif // __LIVEPORTRAIT_PIPELINE_H__
