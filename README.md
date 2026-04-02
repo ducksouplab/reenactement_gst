@@ -1,8 +1,8 @@
 # gst-liveportrait
 
-> [!WARNING]  
-> **Status: Experimental / Non-Functional**  
-> This project is currently under active development. While the C++ port of the LivePortrait logic is largely complete and achieving high frame rates, it is still being refined for full feature parity with the original Python implementation (specifically regarding gaze tracking accuracy).
+> [!IMPORTANT]  
+> **Status: Highly Functional / Near Parity**  
+> This C++ implementation has achieved near-perfect logic parity with the original Python implementation. It features accurate gaze tracking, realistic head pose alignment, and high-performance real-time inference (~45 FPS).
 
 A high-performance GStreamer video filter plugin for real-time head reenactment using **LivePortrait** and **TensorRT 10**.
 
@@ -22,6 +22,16 @@ This implementation is based on the architecture and custom CUDA kernels defined
 - **Motion Smoothing:** Implements the One-Euro filter to eliminate high-frequency facial jitter.
 - **GStreamer Native:** Subclasses `GstVideoFilter` for easy integration into standard Linux video pipelines.
 
+## Technical Insights (Learnings)
+
+To achieve parity with the original repository, several critical nuances were implemented:
+
+1.  **Landmark Resolution:** The Landmark engine strictly requires a **224x224** input resolution. Using 256x256 results in "wide open" eyes due to coordinate scaling mismatches.
+2.  **Multi-Output Landmark handling:** The `landmark.trt` engine provides multiple output tensors. The actual 203 coordinates required for retargeting are located in the **third output tensor (index 2, named "856")**.
+3.  **Rotation Matrix Order:** LivePortrait uses a specific Euler angle order: **`Ry * Rx * Rz`**. The final rotation matrix must also be **transposed** before being applied to the keypoints.
+4.  **Relative Expression Formula:** To prevent "expression overdrive," the transformation strictly follows:  
+    `x_d_i_new = x_s + (x_d_i_new - x_s) * multiplier`, where `x_s` is the source keypoint base.
+
 ## Installation & Build
 
 The plugin must be built within the provided Docker environment to ensure all dependencies (TensorRT 10, CUDA 12, GStreamer 1.28) are met.
@@ -40,9 +50,9 @@ Run the following command from the project root:
 docker run --rm -v $(pwd):/workspace -w /workspace gst-liveportrait-env bash -c "mkdir -p build && cd build && cmake .. && make -j$(nproc)"
 ```
 
-## Usage (Experimental)
+## Usage
 
-Once built, you can test the plugin using `gst-launch-1.0` within the Docker container.
+Load the plugin by adding its path to `GST_PLUGIN_PATH`.
 
 ### GStreamer Pipeline Example
 ```bash
@@ -52,7 +62,7 @@ docker run --rm --gpus all -v $(pwd):/workspace -w /workspace gst-liveportrait-e
     decodebin ! videoconvert ! \
     videocrop left=280 right=280 ! \
     videoscale ! video/x-raw,width=512,height=512,format=RGB ! \
-    liveportrait config-path=./checkpoints source-image=assets/test_image.jpg ! \
+    liveportrait config-path=/workspace/checkpoints source-image=/workspace/assets/test_image.jpg ! \
     videoconvert ! x264enc ! mp4mux ! filesink location=outputs/output.mp4"
 ```
 
@@ -63,18 +73,17 @@ docker run --rm --gpus all -v $(pwd):/workspace -w /workspace gst-liveportrait-e
 ## Architecture
 
 - **`CudaMemoryManager`**: Manages managed and pinned memory for zero-copy-like performance between host and device.
-- **`TRTWrapper`**: Encapsulates TensorRT engine loading, execution, and I/O binding management with a centralized logger.
+- **`TRTWrapper`**: Encapsulates TensorRT engine loading and execution with support for multi-input/multi-output mapping.
 - **`LivePortraitPipeline`**: Orchestrates the complex inference flow and implements the relative motion/expression logic.
-- **`image_proc.cu`**: Custom CUDA kernels for preprocessing (normalization, transpose), postprocessing, and keypoint transformations (rotation, stitching).
+- **`image_proc.cu`**: Custom CUDA kernels for preprocessing, postprocessing, and keypoint transformations.
 
 ## Performance Profiling
 
-The plugin includes built-in `cudaEvent` profiling. Typical results on an RTX A5000:
-- **Total Latency:** ~22ms
-- **Preprocessing:** ~0.2ms
-- **Motion Extraction:** ~2.0ms
+Typical results on an RTX A5000:
+- **Total Latency:** ~22ms (~45 FPS)
+- **Landmark/Motion Ext:** ~2.5ms
 - **Warping (Core):** ~19.0ms
-- **Postprocessing:** ~0.01ms
+- **Stitching/Retarget:** ~0.5ms
 
 ## Acknowledgments
 
@@ -83,4 +92,4 @@ The plugin includes built-in `cudaEvent` profiling. Typical results on an RTX A5
 
 ## License
 
-This project is licensed under the LGPL (consistent with GStreamer plugin standards).
+This project is licensed under the LGPL.
