@@ -45,7 +45,7 @@ The plugin must be built within the provided Docker environment to ensure all de
 
 ### 1. Build the Docker Image
 ```bash
-docker build -t gst-liveportrait-env .
+docker build -t ducksouplab/liveportrait_gst:latest .
 ```
 
 ### 2. Export TensorRT Engines
@@ -54,14 +54,14 @@ Follow the instructions in `INSTRUCTIONS.md` (Phase 1) inside the container to d
 ### 3. Compile the Plugin using Docker
 Run the following command from the project root:
 ```bash
-docker run --rm -v $(pwd):/workspace -w /workspace gst-liveportrait-env bash -c "mkdir -p build && cd build && cmake .. && make -j$(nproc)"
+docker run --rm -v $(pwd):/workspace -w /workspace ducksouplab/liveportrait_gst:latest bash -c "mkdir -p build && cd build && cmake .. && make -j$(nproc)"
 ```
 
 ## Usage
 
 ### GStreamer Pipeline Example
 ```bash
-docker run --rm --gpus all -v $(pwd):/workspace -w /workspace gst-liveportrait-env bash -c "\
+docker run --rm --gpus all -v $(pwd):/workspace -w /workspace ducksouplab/liveportrait_gst:latest bash -c "\
     GST_PLUGIN_PATH=./build gst-launch-1.0 \
     filesrc location=assets/video_example.mp4 ! \
     decodebin ! videoconvert ! \

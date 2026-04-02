@@ -21,7 +21,7 @@ def process_liveportrait(
     plugin_path="./build",
     crop_left=280,
     crop_right=280,
-    docker_image="gst-liveportrait-env",
+    docker_image="ducksouplab/liveportrait_gst:latest",
     verbose=False
 ):
     """
