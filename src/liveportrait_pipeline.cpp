@@ -10,45 +10,6 @@
 
 namespace fs = std::filesystem;
 
-// --- One Euro Filter Implementation ---
-class OneEuroFilter {
-public:
-    OneEuroFilter(double freq, float mincutoff = 1.0, float beta = 0.0, float dcutoff = 1.0)
-        : freq(freq), mincutoff(mincutoff), beta(beta), dcutoff(dcutoff), 
-          x_prev(0), dx_prev(0), first_time(true) {}
-
-    float process(float x) {
-        if (first_time) {
-            x_prev = x;
-            first_time = false;
-            return x;
-        }
-        float dx = (x - x_prev) * freq;
-        float edx = low_pass_filter(dx, dx_prev, alpha(freq, dcutoff));
-        dx_prev = edx;
-        float cutoff = mincutoff + beta * std::abs(edx);
-        float ex = low_pass_filter(x, x_prev, alpha(freq, cutoff));
-        x_prev = ex;
-        return ex;
-    }
-
-private:
-    double freq;
-    float mincutoff, beta, dcutoff;
-    float x_prev, dx_prev;
-    bool first_time;
-
-    float alpha(double freq, float cutoff) {
-        float tau = 1.0 / (2 * M_PI * cutoff);
-        float te = 1.0 / freq;
-        return 1.0 / (1.0 + tau / te);
-    }
-
-    float low_pass_filter(float x, float y_prev, float alpha) {
-        return alpha * x + (1 - alpha) * y_prev;
-    }
-};
-
 static void get_rotation_matrix(float pitch_deg, float yaw_deg, float roll_deg, float* R) {
     float PI = 3.14159265358979323846f;
     float p = pitch_deg * PI / 180.0f;
@@ -59,7 +20,7 @@ static void get_rotation_matrix(float pitch_deg, float yaw_deg, float roll_deg, 
     float cy = cosf(y), sy = sinf(y);
     float cr = cosf(r), sr = sinf(r);
 
-    // Python Logic: rot = rot_z @ rot_y @ rot_x; return rot.T
+    // Python Logic: rot = rot_y @ rot_x @ rot_z; return rot.T
     float Rx[9] = {1, 0, 0, 0, cp, -sp, 0, sp, cp};
     float Ry[9] = {cy, 0, sy, 0, 1, 0, -sy, 0, cy};
     float Rz[9] = {cr, -sr, 0, sr, cr, 0, 0, 0, 1};
@@ -75,7 +36,7 @@ static void get_rotation_matrix(float pitch_deg, float yaw_deg, float roll_deg, 
     for(int i=0; i<3; ++i)
         for(int j=0; j<3; ++j) {
             R_full[i*3+j] = 0;
-            for(int k=0; k<3; ++k) R_full[i*3+j] += Rz[i*3+k] * RyRx[k*3+j];
+            for(int k=0; k<3; ++k) R_full[i*3+j] += RyRx[i*3+k] * Rz[k*3+j];
         }
 
     // Return Transpose
@@ -104,7 +65,8 @@ static float calc_dist(const float* lmk, int idx1, int idx2) {
 }
 
 LivePortraitPipeline::LivePortraitPipeline(const std::string& checkpoints_dir, cudaStream_t stream) 
-    : stream(stream), is_first_frame(true), frame_count(0) {
+    : stream(stream), is_first_frame(true), frame_count(0),
+      f_p(25.0, 0.05, 0.005), f_y(25.0, 0.05, 0.005), f_r(25.0, 0.05, 0.005) {
     
     mem = std::make_unique<CudaMemoryManager>();
     std::string base = checkpoints_dir + "/liveportrait_onnx/";
@@ -216,12 +178,7 @@ bool LivePortraitPipeline::initSource(const std::string& image_path) {
     void* gpu_input_lmk_s = mem->allocateDevice(3 * 224 * 224 * sizeof(float), "src_lmk_input");
     preprocessImage(src_square, gpu_input_lmk_s, 224, 224, true);
     landmark_engine->execute({{"input", gpu_input_lmk_s}}, {{"output", gpu_lmk_d_out1}, {"853", gpu_lmk_d_out2}, {"856", gpu_lmk_d_out3}});
-    cudaMemcpyAsync(h_lmk, gpu_lmk_d_out3, 203 * 2 * sizeof(float), cudaMemcpyDeviceToHost, stream);
-    cudaStreamSynchronize(stream);
-    float s_eye_ratio[2] = { calc_dist(h_lmk, 6, 18) / (calc_dist(h_lmk, 0, 12) + 1e-6f), calc_dist(h_lmk, 30, 42) / (calc_dist(h_lmk, 24, 36) + 1e-6f) };
-    float s_lip_ratio = calc_dist(h_lmk, 90, 102) / (calc_dist(h_lmk, 48, 66) + 1e-6f);
-    cudaMemcpyAsync(gpu_eye_ratio_s, s_eye_ratio, 2 * sizeof(float), cudaMemcpyHostToDevice, stream);
-    cudaMemcpyAsync(gpu_lip_ratio_s, &s_lip_ratio, 1 * sizeof(float), cudaMemcpyHostToDevice, stream);
+    launch_calc_ratios((float*)gpu_lmk_d_out3, (float*)gpu_eye_ratio_s, (float*)gpu_lip_ratio_s, stream);
 
     void* gpu_input_motion_s = mem->allocateDevice(3 * 256 * 256 * sizeof(float), "src_motion_input");
     preprocessImage(src_square, gpu_input_motion_s, 256, 256, true);
@@ -246,18 +203,13 @@ bool LivePortraitPipeline::initSource(const std::string& image_path) {
 
 bool LivePortraitPipeline::processFrame(const void* in_data, void* out_data, int width, int height) {
     if (src_img.empty()) return false;
-    static OneEuroFilter f_p(25, 0.05, 0.005), f_y(25, 0.05, 0.005), f_r(25, 0.05, 0.005);
     cv::Mat d_frame(height, width, CV_8UC3, (void*)in_data);
     preprocessImage(d_frame, gpu_input_motion_d, 256, 256, false);
     preprocessImage(d_frame, gpu_input_landmark_d, 224, 224, false);
     motion_engine->execute({{"img", gpu_input_motion_d}}, {{"pitch", pitch_d}, {"yaw", yaw_d}, {"roll", roll_d}, {"t", t_d}, {"exp", exp_d}, {"scale", scale_d}, {"kp", x_d}});
     landmark_engine->execute({{"input", gpu_input_landmark_d}}, {{"output", gpu_lmk_d_out1}, {"853", gpu_lmk_d_out2}, {"856", gpu_lmk_d_out3}});
-    cudaMemcpyAsync(h_lmk, gpu_lmk_d_out3, 203 * 2 * sizeof(float), cudaMemcpyDeviceToHost, stream);
-    cudaStreamSynchronize(stream);
-    float eye_ratio_d[2] = { calc_dist(h_lmk, 6, 18) / (calc_dist(h_lmk, 0, 12) + 1e-6f), calc_dist(h_lmk, 30, 42) / (calc_dist(h_lmk, 24, 36) + 1e-6f) };
-    float lip_ratio_d = calc_dist(h_lmk, 90, 102) / (calc_dist(h_lmk, 48, 66) + 1e-6f);
-    cudaMemcpyAsync(gpu_eye_ratio_d, eye_ratio_d, 2 * sizeof(float), cudaMemcpyHostToDevice, stream);
-    cudaMemcpyAsync(gpu_lip_ratio_d, &lip_ratio_d, 1 * sizeof(float), cudaMemcpyHostToDevice, stream);
+    launch_calc_ratios((float*)gpu_lmk_d_out3, (float*)gpu_eye_ratio_d, (float*)gpu_lip_ratio_d, stream);
+
     if (is_first_frame) {
         cudaMemcpyAsync(h_pitch, pitch_d, 66 * sizeof(float), cudaMemcpyDeviceToHost, stream);
         cudaMemcpyAsync(h_yaw, yaw_d, 66 * sizeof(float), cudaMemcpyDeviceToHost, stream);
@@ -280,16 +232,26 @@ bool LivePortraitPipeline::processFrame(const void* in_data, void* out_data, int
     get_rotation_matrix(f_p.process(headpose_pred_to_degree(h_pitch)), f_y.process(headpose_pred_to_degree(h_yaw)), f_r.process(headpose_pred_to_degree(h_roll)), R_d_i);
     get_rotation_matrix(d_0_pitch_deg, d_0_yaw_deg, d_0_roll_deg, R_d_0);
     
-    // Transpose R_d_0 correctly (R_d_0 was already transposed in get_rotation_matrix, so this is actually R_d_0_raw)
-    float R_d_0_inv[9] = {R_d_0[0], R_d_0[3], R_d_0[6], R_d_0[1], R_d_0[4], R_d_0[7], R_d_0[2], R_d_0[5], R_d_0[8]};
-    for(int i=0; i<3; ++i) for(int j=0; j<3; ++j) { R_rel[i*3+j] = 0; for(int k=0; k<3; ++k) R_rel[i*3+j] += R_d_i[i*3+k] * R_d_0_inv[k*3+j]; }
+    // R_d_i and R_d_0 from get_rotation_matrix are already transposed (rot.T).
+    // In Python: R_rel = R_d_i @ R_d_0.T
+    // Here: R_rel = R_d_i @ R_d_0_raw
+    // Since R_d_0 = R_d_0_raw.T, then R_d_0.T = R_d_0_raw.
+    // Wait, let's rethink:
+    // get_rotation_matrix returns R = (RyRxRz).T
+    // So R_d_0 = (Ry0 Rx0 Rz0).T
+    // We want R_rel = (Ryi Rxi Rzi) @ (Ry0 Rx0 Rz0).T
+    // R_rel = R_d_i.T @ R_d_0
+    // Actually, it's simpler to just use the raw matrices if we want R_rel.
+    // But let's follow the logic: R_new = R_rel @ R_s
+    
+    for(int i=0; i<3; ++i) for(int j=0; j<3; ++j) { R_rel[i*3+j] = 0; for(int k=0; k<3; ++k) R_rel[i*3+j] += R_d_i[i*3+k] * R_d_0[k*3+j]; }
     for(int i=0; i<3; ++i) for(int j=0; j<3; ++j) { R_new[i*3+j] = 0; for(int k=0; k<3; ++k) R_new[i*3+j] += R_rel[i*3+k] * R_s[k*3+j]; }
     
     float t_new[3] = {s_t[0] + (h_t[0] - d_0_t[0]), s_t[1] + (h_t[1] - d_0_t[1]), 0};
     float scale_new = s_scale * (h_scale[0] / d_0_scale);
     cudaMemcpyAsync(gpu_R_final, R_new, 9 * sizeof(float), cudaMemcpyHostToDevice, stream);
     cudaMemcpyAsync(gpu_t_final, t_new, 3 * sizeof(float), cudaMemcpyHostToDevice, stream);
-    launch_relative_expression((float*)exp_s, (float*)exp_d, (float*)gpu_exp_d_0, (float*)gpu_exp_rel, 63, stream);
+    launch_relative_expression((float*)exp_s, (float*)exp_d, (float*)gpu_exp_d_0, (float*)gpu_exp_rel, 63, 1.0f, stream);
     launch_transform_kp((float*)x_s, (float*)gpu_R_final, (float*)gpu_exp_rel, scale_new, (float*)gpu_t_final, (float*)gpu_kp_rel, 21, stream);
     
     launch_concat_feat((float*)x_s, 63, (float*)gpu_kp_rel, 63, (float*)gpu_stitching_input, stream);

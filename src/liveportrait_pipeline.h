@@ -8,6 +8,45 @@
 #include <map>
 #include <opencv2/opencv.hpp>
 
+// --- One Euro Filter Implementation ---
+class OneEuroFilter {
+public:
+    OneEuroFilter(double freq = 25.0, float mincutoff = 1.0, float beta = 0.0, float dcutoff = 1.0)
+        : freq(freq), mincutoff(mincutoff), beta(beta), dcutoff(dcutoff), 
+          x_prev(0), dx_prev(0), first_time(true) {}
+
+    float process(float x) {
+        if (first_time) {
+            x_prev = x;
+            first_time = false;
+            return x;
+        }
+        float dx = (x - x_prev) * freq;
+        float edx = low_pass_filter(dx, dx_prev, alpha(freq, dcutoff));
+        dx_prev = edx;
+        float cutoff = mincutoff + beta * std::abs(edx);
+        float ex = low_pass_filter(x, x_prev, alpha(freq, cutoff));
+        x_prev = ex;
+        return ex;
+    }
+
+private:
+    double freq;
+    float mincutoff, beta, dcutoff;
+    float x_prev, dx_prev;
+    bool first_time;
+
+    float alpha(double freq, float cutoff) {
+        float tau = 1.0 / (2 * 3.14159265358979323846 * cutoff);
+        float te = 1.0 / freq;
+        return 1.0 / (1.0 + tau / te);
+    }
+
+    float low_pass_filter(float x, float y_prev, float alpha) {
+        return alpha * x + (1 - alpha) * y_prev;
+    }
+};
+
 class LivePortraitPipeline {
 public:
     LivePortraitPipeline(const std::string& checkpoints_dir, cudaStream_t stream);
@@ -22,6 +61,9 @@ private:
 
     cudaStream_t stream;
     std::unique_ptr<CudaMemoryManager> mem;
+
+    // Smoothing filters
+    OneEuroFilter f_p, f_y, f_r;
 
     // Engines
     std::unique_ptr<TRTWrapper> appearance_engine;

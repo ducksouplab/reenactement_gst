@@ -70,10 +70,10 @@ __global__ void transform_kp_kernel(const float* kp, const float* R, const float
     }
 }
 
-__global__ void relative_expression_kernel(const float* exp_s, const float* exp_d_i, const float* exp_d_0, float* out, int size) {
+__global__ void relative_expression_kernel(const float* exp_s, const float* exp_d_i, const float* exp_d_0, float* out, int size, float multiplier) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < size) {
-        out[i] = exp_s[i] + (exp_d_i[i] - exp_d_0[i]);
+        out[i] = exp_s[i] + (exp_d_i[i] - exp_d_0[i]) * multiplier;
     }
 }
 
@@ -108,6 +108,18 @@ __global__ void concat_feat_kernel(const float* kp1, int size1, const float* kp2
     }
 }
 
+__device__ float dev_dist(const float* lmk, int idx1, int idx2) {
+    float dx = lmk[idx1*2 + 0] - lmk[idx2*2 + 0];
+    float dy = lmk[idx1*2 + 1] - lmk[idx2*2 + 1];
+    return sqrtf(dx*dx + dy*dy);
+}
+
+__global__ void calc_ratios_kernel(const float* lmk, float* eye_ratio, float* lip_ratio) {
+    eye_ratio[0] = dev_dist(lmk, 6, 18) / (dev_dist(lmk, 0, 12) + 1e-6f);
+    eye_ratio[1] = dev_dist(lmk, 30, 42) / (dev_dist(lmk, 24, 36) + 1e-6f);
+    lip_ratio[0] = dev_dist(lmk, 90, 102) / (dev_dist(lmk, 48, 66) + 1e-6f);
+}
+
 extern "C" {
 
 void launch_preprocess(const uint8_t* src, float* dst, int w, int h, bool bgr_to_rgb, cudaStream_t stream) {
@@ -128,10 +140,10 @@ void launch_transform_kp(const float* kp, const float* R, const float* exp, floa
     transform_kp_kernel<<<blocks, threads, 0, stream>>>(kp, R, exp, scale, t, out, num_kp);
 }
 
-void launch_relative_expression(const float* exp_s, const float* exp_d_i, const float* exp_d_0, float* out, int size, cudaStream_t stream) {
+void launch_relative_expression(const float* exp_s, const float* exp_d_i, const float* exp_d_0, float* out, int size, float multiplier, cudaStream_t stream) {
     int threads = 64;
     int blocks = (size + threads - 1) / threads;
-    relative_expression_kernel<<<blocks, threads, 0, stream>>>(exp_s, exp_d_i, exp_d_0, out, size);
+    relative_expression_kernel<<<blocks, threads, 0, stream>>>(exp_s, exp_d_i, exp_d_0, out, size, multiplier);
 }
 
 void launch_apply_stitching(float* kp, const float* delta, int num_kp, cudaStream_t stream) {
@@ -151,6 +163,10 @@ void launch_concat_feat(const float* kp1, int size1, const float* kp2, int size2
     int threads = 64;
     int blocks = (total + threads - 1) / threads;
     concat_feat_kernel<<<blocks, threads, 0, stream>>>(kp1, size1, kp2, size2, out);
+}
+
+void launch_calc_ratios(const float* lmk, float* eye_ratio, float* lip_ratio, cudaStream_t stream) {
+    calc_ratios_kernel<<<1, 1, 0, stream>>>(lmk, eye_ratio, lip_ratio);
 }
 
 }

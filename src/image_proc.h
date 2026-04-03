@@ -11,10 +11,11 @@ extern "C" {
 void launch_preprocess(const uint8_t* src, float* dst, int w, int h, bool bgr_to_rgb, cudaStream_t stream);
 void launch_postprocess(const float* src, uint8_t* dst, int w, int h, bool rgb_to_bgr, cudaStream_t stream);
 void launch_transform_kp(const float* kp, const float* R, const float* exp, float scale, const float* t, float* out, int num_kp, cudaStream_t stream);
-void launch_relative_expression(const float* exp_s, const float* exp_d_i, const float* exp_d_0, float* out, int size, cudaStream_t stream);
+void launch_relative_expression(const float* exp_s, const float* exp_d_i, const float* exp_d_0, float* out, int size, float multiplier, cudaStream_t stream);
 void launch_apply_stitching(float* kp, const float* delta, int num_kp, cudaStream_t stream);
 void launch_add_deltas(float* kp, const float* d1, const float* d2, const float* d3, int num_kp, cudaStream_t stream);
 void launch_concat_feat(const float* kp1, int size1, const float* kp2, int size2, float* out, cudaStream_t stream);
+void launch_calc_ratios(const float* lmk, float* eye_ratio, float* lip_ratio, cudaStream_t stream);
 
 #ifdef __cplusplus
 }
