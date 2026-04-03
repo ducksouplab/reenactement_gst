@@ -92,16 +92,18 @@ docker run --rm -v $(pwd):/workspace -w /workspace ducksouplab/liveportrait_gst:
 
 ## Usage
 
-### GStreamer Pipeline Example
+### GStreamer Pipeline Example (with Audio)
 ```bash
 docker run --rm --gpus all -v $(pwd):/workspace -w /workspace ducksouplab/liveportrait_gst:latest bash -c "\
     GST_PLUGIN_PATH=./build gst-launch-1.0 \
-    filesrc location=assets/video_example.mp4 ! \
-    decodebin ! videoconvert ! \
+    filesrc location=assets/video_example.mp4 name=src ! decodebin name=dec \
+    dec. ! queue ! videoconvert ! \
     videocrop left=280 right=280 ! \
     videoscale ! video/x-raw,width=512,height=512,format=RGB ! \
     liveportrait config-path=./checkpoints source-image=assets/test_image.jpg ! \
-    videoconvert ! x264enc ! mp4mux ! filesink location=outputs/output.mp4"
+    videoconvert ! x264enc bitrate=2000 ! mux. \
+    dec. ! queue ! audioconvert ! audioresample ! avenc_aac ! mux. \
+    mp4mux name=mux ! filesink location=outputs/output_with_audio.mp4"
 ```
 
 ### Python Wrapper

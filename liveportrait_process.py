@@ -65,15 +65,17 @@ def process_liveportrait(
             f"gaze-x={gaze_x} gaze-y={gaze_y} "
         )
 
-    # Prepare the pipeline string
+    # Prepare the pipeline string with AUDIO BRANCHING
+    # We use names 'src' and 'dec' to link branches
     pipeline = (
-        f"filesrc location={docker_work}/{input_file} ! "
-        f"decodebin ! videoconvert ! "
+        f"filesrc location={docker_work}/{input_file} name=fsrc ! decodebin name=dec "
+        f"dec. ! queue ! videoconvert ! "
         f"videocrop left={crop_left} right={crop_right} ! "
         f"videoscale ! video/x-raw,width=512,height=512,format=RGB ! "
         f"liveportrait config-path={docker_config} source-image={docker_source}/{source_file} {eye_str}! "
-        f"videoconvert ! x264enc ! mp4mux ! "
-        f"filesink location={docker_work}/{output_file}"
+        f"videoconvert ! x264enc tune=zerolatency bitrate=2000 ! mux. "
+        f"dec. ! queue ! audioconvert ! audioresample ! avenc_aac ! mux. "
+        f"mp4mux name=mux ! filesink location={docker_work}/{output_file}"
     )
 
     # Docker command construction
@@ -100,6 +102,7 @@ def process_liveportrait(
         "gst-launch-1.0", "-q"
     ])
     
+    # Splitting the pipeline string for Docker command
     docker_cmd.extend(pipeline.split())
 
     run_command(docker_cmd, verbose)
