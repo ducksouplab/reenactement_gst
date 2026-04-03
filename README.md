@@ -1,8 +1,9 @@
 # gst-liveportrait
 
 > [!IMPORTANT]  
-> **Status: Highly Functional / Near Parity**  
+> **Status: Functional / Near Parity**  
 > This C++ implementation has achieved near-perfect logic parity with the original Python implementation. It features accurate gaze tracking, realistic head pose alignment, and high-performance real-time inference (~45 FPS).
+> This plugin is still in a highly experimental stage.
 
 A high-performance GStreamer video filter plugin for real-time head reenactment using **LivePortrait** and **TensorRT 10**.
 
