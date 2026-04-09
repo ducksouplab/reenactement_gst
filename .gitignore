@@ -2,6 +2,7 @@ checkpoints/
 build/
 outputs/
 results/
+mp-out/
 *.onnx
 *.engine
 *.pyc
