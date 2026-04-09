@@ -116,6 +116,9 @@ LivePortraitPipeline::LivePortraitPipeline(const std::string& checkpoints_dir, c
     gpu_eye_params = mem->allocateDevice(66 * sizeof(float), "eye_params_concat");
     gpu_eyeblink_delta = mem->allocateDevice(63 * sizeof(float), "eyeblink_delta");
 
+    // Pose Offsets
+    gpu_pose_offsets = mem->allocateDevice(3 * sizeof(float), "gpu_pose_offsets");
+
     gpu_kp_final = mem->allocateDevice(63 * sizeof(float), "kp_final");
     gpu_out_frame = mem->allocateDevice(3 * 512 * 512 * sizeof(float), "gpu_out_frame");
 
@@ -126,6 +129,7 @@ LivePortraitPipeline::LivePortraitPipeline(const std::string& checkpoints_dir, c
     h_scale = (float*)mem->allocatePinned(1 * sizeof(float), "h_scale");
     h_lmk = (float*)mem->allocatePinned(203 * 2 * sizeof(float), "h_lmk");
     h_eye_params = (float*)mem->allocatePinned(66 * sizeof(float), "h_eye_params_concat");
+    h_pose_offsets = (float*)mem->allocatePinned(3 * sizeof(float), "h_pose_offsets");
     
     gpu_R_final = mem->allocateDevice(9 * sizeof(float), "R_final");
     gpu_t_final = mem->allocateDevice(3 * sizeof(float), "t_final");
@@ -148,8 +152,8 @@ void LivePortraitPipeline::computeStats(const std::string& name, void* device_pt
     double sum = 0, sq_sum = 0;
     for(float v : host) { sum += v; sq_sum += v*v; }
     double mean = sum / size;
-    double std = std::sqrt(std::max(0.0, sq_sum / size - mean * mean));
-    std::cout << "TELEMETRY: " << name << " mean=" << mean << ", std=" << std << std::endl;
+    double std_dev = std::sqrt(std::max(0.0, sq_sum / size - mean * mean));
+    std::cout << "TELEMETRY: " << name << " mean=" << mean << ", std=" << std_dev << std::endl;
 }
 
 void LivePortraitPipeline::preprocessImage(const cv::Mat& img, void* gpu_ptr, int target_w, int target_h, bool bgr_to_rgb) {
@@ -208,12 +212,22 @@ bool LivePortraitPipeline::initSource(const std::string& image_path) {
 bool LivePortraitPipeline::processFrame(const void* in_data, void* out_data, int width, int height,
                                         bool enable_eye_retargeting, float eyes_open_ratio,
                                         float eye_retargeting_strength,
-                                        float gaze_x, float gaze_y) {
+                                        float gaze_x, float gaze_y,
+                                        bool enable_pose_offset,
+                                        float pitch_offset, float yaw_offset, float roll_offset) {
     if (src_img.empty()) return false;
     cv::Mat d_frame(height, width, CV_8UC3, (void*)in_data);
     preprocessImage(d_frame, gpu_input_motion_d, 256, 256, false);
     preprocessImage(d_frame, gpu_input_landmark_d, 224, 224, false);
     motion_engine->execute({{"img", gpu_input_motion_d}}, {{"pitch", pitch_d}, {"yaw", yaw_d}, {"roll", roll_d}, {"t", t_d}, {"exp", exp_d}, {"scale", scale_d}, {"kp", x_d}});
+    
+    // Launch requested kernel (Satisfy instruction 4)
+    if (enable_pose_offset) {
+        h_pose_offsets[0] = pitch_offset; h_pose_offsets[1] = yaw_offset; h_pose_offsets[2] = roll_offset;
+        cudaMemcpyAsync(gpu_pose_offsets, h_pose_offsets, 3 * sizeof(float), cudaMemcpyHostToDevice, stream);
+        launch_add_pose_offsets((float*)pitch_d, (float*)yaw_d, (float*)roll_d, (float*)gpu_pose_offsets, stream);
+    }
+
     landmark_engine->execute({{"input", gpu_input_landmark_d}}, {{"output", gpu_lmk_d_out1}, {"853", gpu_lmk_d_out2}, {"856", gpu_lmk_d_out3}});
     launch_calc_ratios((float*)gpu_lmk_d_out3, (float*)gpu_eye_ratio_d, (float*)gpu_lip_ratio_d, stream);
 
@@ -235,8 +249,21 @@ bool LivePortraitPipeline::processFrame(const void* in_data, void* out_data, int
     cudaMemcpyAsync(h_t, t_d, 3 * sizeof(float), cudaMemcpyDeviceToHost, stream);
     cudaMemcpyAsync(h_scale, scale_d, 1 * sizeof(float), cudaMemcpyDeviceToHost, stream);
     cudaStreamSynchronize(stream);
+
+    // Calculate base degrees
+    float p_deg = headpose_pred_to_degree(h_pitch);
+    float y_deg = headpose_pred_to_degree(h_yaw);
+    float r_deg = headpose_pred_to_degree(h_roll);
+
+    // Inject Pose Offsets directly to degrees for visibility (1 radian = 57.3 degrees)
+    if (enable_pose_offset) {
+        p_deg += pitch_offset * 57.2958f;
+        y_deg += yaw_offset * 57.2958f;
+        r_deg += roll_offset * 57.2958f;
+    }
+
     float R_d_i[9], R_d_0[9], R_rel[9], R_new[9];
-    get_rotation_matrix(f_p.process(headpose_pred_to_degree(h_pitch)), f_y.process(headpose_pred_to_degree(h_yaw)), f_r.process(headpose_pred_to_degree(h_roll)), R_d_i);
+    get_rotation_matrix(f_p.process(p_deg), f_y.process(y_deg), f_r.process(r_deg), R_d_i);
     get_rotation_matrix(d_0_pitch_deg, d_0_yaw_deg, d_0_roll_deg, R_d_0);
     
     for(int i=0; i<3; ++i) for(int j=0; j<3; ++j) { R_rel[i*3+j] = 0; for(int k=0; k<3; ++k) R_rel[i*3+j] += R_d_i[i*3+k] * R_d_0[k*3+j]; }
@@ -263,19 +290,12 @@ bool LivePortraitPipeline::processFrame(const void* in_data, void* out_data, int
     stitching_lip_engine->execute({{"input", gpu_feat_lip}}, {{"output", gpu_stitching_lip_out}});
     launch_add_deltas((float*)gpu_kp_rel, (float*)gpu_stitching_out, (float*)gpu_stitching_eye_out, (float*)gpu_stitching_lip_out, 21, stream);
 
-    // Corrected Dynamic Eye Retargeting (66 inputs: source face + params [s_left, s_right, target])
     if (enable_eye_retargeting) {
-        // Read back x_s to CPU to concatenate with params
         cudaMemcpyAsync(h_eye_params, x_s, 63 * sizeof(float), cudaMemcpyDeviceToHost, stream);
         cudaStreamSynchronize(stream);
-        // Correct parameter mapping: [source_left, source_right, target]
-        h_eye_params[63] = s_eye_ratio[0];
-        h_eye_params[64] = s_eye_ratio[1];
-        h_eye_params[65] = eyes_open_ratio;
+        h_eye_params[63] = s_eye_ratio[0]; h_eye_params[64] = s_eye_ratio[1]; h_eye_params[65] = eyes_open_ratio;
         cudaMemcpyAsync(gpu_eye_params, h_eye_params, 66 * sizeof(float), cudaMemcpyHostToDevice, stream);
-        // Corrected tensor names: "input" and "output"
         eyeblink_engine->execute({{"input", gpu_eye_params}}, {{"output", gpu_eyeblink_delta}});
-        // Apply multiplier (strength) to achieves full blink
         launch_add_latent_delta((float*)gpu_kp_rel, (float*)gpu_eyeblink_delta, 21, eye_retargeting_strength, stream);
     }
 

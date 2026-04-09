@@ -11,6 +11,7 @@
 | **7** | Profiling | **Done** |
 | **8** | Phase A: Eye Retargeting Export | **Done** |
 | **9** | Phase B: C++ Eye Retargeting Integration | **Done** |
+| **10** | Head Pose Augmentation (Relative Offsets) | **In Progress** |
 
 ## Phase 1 Log
 - [x] Create Dockerfile.
@@ -30,3 +31,9 @@
 - [x] Create and launch `add_latent_delta_kernel`.
 - [x] Verify with test pipeline.
 
+## Phase 10 Log: Head Pose Augmentation
+- [ ] Add GStreamer properties for pitch/yaw/roll offsets.
+- [ ] Allocate Pinned and Device buffers for offsets.
+- [ ] Implement `add_pose_offsets_kernel` in CUDA.
+- [ ] Integrate kernel into `processFrame` (post-Motion Extractor).
+- [ ] Verify relative head movements.

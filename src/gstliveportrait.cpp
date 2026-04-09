@@ -18,6 +18,10 @@ enum
   PROP_EYE_RETARGETING_STRENGTH,
   PROP_GAZE_X,
   PROP_GAZE_Y,
+  PROP_ENABLE_POSE_OFFSET,
+  PROP_POSE_PITCH_OFFSET,
+  PROP_POSE_YAW_OFFSET,
+  PROP_POSE_ROLL_OFFSET,
 };
 
 #define VIDEO_CAPS \
@@ -84,6 +88,27 @@ gst_liveportrait_class_init (GstLivePortraitClass * klass)
           "Gaze direction Y (-1.0 to 1.0)", -1.0, 1.0, 0.0,
           (GParamFlags) (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
+  /* Pose Offset Properties (Phase 10) */
+  g_object_class_install_property (gobject_class, PROP_ENABLE_POSE_OFFSET,
+      g_param_spec_boolean ("enable-pose-offset", "Enable Pose Offset",
+          "Enable programmatic head pose augmentation", FALSE,
+          (GParamFlags) (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
+  g_object_class_install_property (gobject_class, PROP_POSE_PITCH_OFFSET,
+      g_param_spec_float ("pose-pitch-offset", "Pose Pitch Offset",
+          "Relative pitch offset in radians", -3.14, 3.14, 0.0,
+          (GParamFlags) (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
+  g_object_class_install_property (gobject_class, PROP_POSE_YAW_OFFSET,
+      g_param_spec_float ("pose-yaw-offset", "Pose Yaw Offset",
+          "Relative yaw offset in radians", -3.14, 3.14, 0.0,
+          (GParamFlags) (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
+  g_object_class_install_property (gobject_class, PROP_POSE_ROLL_OFFSET,
+      g_param_spec_float ("pose-roll-offset", "Pose Roll Offset",
+          "Relative roll offset in radians", -3.14, 3.14, 0.0,
+          (GParamFlags) (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
   gst_element_class_add_pad_template (GST_ELEMENT_CLASS (klass),
       gst_pad_template_new ("src", GST_PAD_SRC, GST_PAD_ALWAYS, gst_caps_from_string (VIDEO_CAPS)));
   gst_element_class_add_pad_template (GST_ELEMENT_CLASS (klass),
@@ -103,6 +128,10 @@ gst_liveportrait_init (GstLivePortrait * self)
   self->eye_retargeting_strength = 1.0f;
   self->gaze_x = 0.0f;
   self->gaze_y = 0.0f;
+  self->enable_pose_offset = FALSE;
+  self->pose_pitch_offset = 0.0f;
+  self->pose_yaw_offset = 0.0f;
+  self->pose_roll_offset = 0.0f;
   self->cuda_initialized = FALSE;
   self->pipeline = NULL;
 }
@@ -152,6 +181,19 @@ gst_liveportrait_set_property (GObject * object, guint prop_id, const GValue * v
     case PROP_GAZE_Y:
       self->gaze_y = g_value_get_float (value);
       break;
+    case PROP_ENABLE_POSE_OFFSET:
+      self->enable_pose_offset = g_value_get_boolean (value);
+      break;
+    case PROP_POSE_PITCH_OFFSET:
+      self->pose_pitch_offset = g_value_get_float (value);
+      GST_DEBUG_OBJECT (self, "pose-pitch-offset set to %f", self->pose_pitch_offset);
+      break;
+    case PROP_POSE_YAW_OFFSET:
+      self->pose_yaw_offset = g_value_get_float (value);
+      break;
+    case PROP_POSE_ROLL_OFFSET:
+      self->pose_roll_offset = g_value_get_float (value);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -184,6 +226,18 @@ gst_liveportrait_get_property (GObject * object, guint prop_id, GValue * value, 
       break;
     case PROP_GAZE_Y:
       g_value_set_float (value, self->gaze_y);
+      break;
+    case PROP_ENABLE_POSE_OFFSET:
+      g_value_set_boolean (value, self->enable_pose_offset);
+      break;
+    case PROP_POSE_PITCH_OFFSET:
+      g_value_set_float (value, self->pose_pitch_offset);
+      break;
+    case PROP_POSE_YAW_OFFSET:
+      g_value_set_float (value, self->pose_yaw_offset);
+      break;
+    case PROP_POSE_ROLL_OFFSET:
+      g_value_set_float (value, self->pose_roll_offset);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -253,7 +307,11 @@ gst_liveportrait_transform_frame (GstVideoFilter * filter, GstVideoFrame * in_fr
                          self->eyes_open_ratio,
                          self->eye_retargeting_strength,
                          self->gaze_x,
-                         self->gaze_y);
+                         self->gaze_y,
+                         self->enable_pose_offset,
+                         self->pose_pitch_offset,
+                         self->pose_yaw_offset,
+                         self->pose_roll_offset);
   } else {
       gst_video_frame_copy (out_frame, in_frame);
   }

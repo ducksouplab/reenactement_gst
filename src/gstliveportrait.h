@@ -26,6 +26,12 @@ struct _GstLivePortrait
   gfloat gaze_x;
   gfloat gaze_y;
 
+  /* Pose offset properties */
+  gboolean enable_pose_offset;
+  gfloat pose_yaw_offset;
+  gfloat pose_pitch_offset;
+  gfloat pose_roll_offset;
+
   /* CUDA state */
   cudaStream_t stream;
   gboolean cuda_initialized;

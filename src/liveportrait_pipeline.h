@@ -56,7 +56,9 @@ public:
     bool processFrame(const void* in_data, void* out_data, int width, int height,
                       bool enable_eye_retargeting = false, float eyes_open_ratio = 0.0f,
                       float eye_retargeting_strength = 1.0f,
-                      float gaze_x = 0.0f, float gaze_y = 0.0f);
+                      float gaze_x = 0.0f, float gaze_y = 0.0f,
+                      bool enable_pose_offset = false,
+                      float pitch_offset = 0.0f, float yaw_offset = 0.0f, float roll_offset = 0.0f);
 
 private:
     void preprocessImage(const cv::Mat& img, void* gpu_ptr, int target_w, int target_h, bool bgr_to_rgb);
@@ -145,10 +147,12 @@ private:
 
     void* gpu_eye_params; // Now 66 floats: x_s (63) + params (3)
     void* gpu_eyeblink_delta;
+    void* gpu_pose_offsets;
 
     // CPU Pinned buffers for reading back small tensors
     float *h_pitch, *h_yaw, *h_roll, *h_t, *h_scale, *h_lmk;
     float *h_eye_params;
+    float *h_pose_offsets;
 
     // Profiling
     cudaEvent_t ev_start, ev_end;

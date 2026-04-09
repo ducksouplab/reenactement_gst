@@ -129,6 +129,15 @@ __global__ void add_latent_delta_kernel(float* kp, const float* delta, int num_k
     }
 }
 
+__global__ void add_pose_offsets_kernel(float* pitch, float* yaw, float* roll, const float* offsets) {
+    // Each is [1, 66], we add to the first element which often represents 
+    // the value or we might need to shift the whole distribution if it's classification.
+    // However, the prompt says d_pitch[0] += gpu_pose_offsets[0].
+    pitch[0] += offsets[0];
+    yaw[0] += offsets[1];
+    roll[0] += offsets[2];
+}
+
 extern "C" {
 
 void launch_preprocess(const uint8_t* src, float* dst, int w, int h, bool bgr_to_rgb, cudaStream_t stream) {
@@ -182,6 +191,10 @@ void launch_add_latent_delta(float* kp, const float* delta, int num_kp, float mu
     int threads = 64;
     int blocks = (num_kp + threads - 1) / threads;
     add_latent_delta_kernel<<<blocks, threads, 0, stream>>>(kp, delta, num_kp, multiplier);
+}
+
+void launch_add_pose_offsets(float* pitch, float* yaw, float* roll, const float* offsets, cudaStream_t stream) {
+    add_pose_offsets_kernel<<<1, 1, 0, stream>>>(pitch, yaw, roll, offsets);
 }
 
 }

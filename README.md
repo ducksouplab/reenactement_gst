@@ -149,6 +149,20 @@ Typical results on an RTX A5000:
 - [FasterLivePortrait](https://github.com/warmshao/FasterLivePortrait) for the original algorithm and model architecture.
 - [grid-sample3d-trt-plugin](https://github.com/SeanWangJS/grid-sample3d-trt-plugin) for the custom TensorRT plugin.
 
+# DuckSoup usage
+If running these plugins within DuckSoup, copy the .so files to your DuckSoup plugin repository.
+
+# First remove old .so files from your path, for instance, if you are using a deploy user to run ducksoup, something like:
+# Make sure that you don't need the files, this will remove the files from your computer!
+sudo rm -r /home/deploy/deploy-ducksoup/app/plugins/liveportrait_gst.so
+
+#Now copy the new files:
+sudo cp -r mp-out/plugins/liveportrait_gst.so /home/deploy/deploy-ducksoup/app/plugins/liveportrait_gst.so
+
+#Also copy the required models (TensorRT engines):
+# Ensure you copy all the .trt files from your checkpoints/liveportrait_onnx/ directory
+# to the location expected by your DuckSoup configuration.
+
 ## License
 
 This project is licensed under the LGPL.
