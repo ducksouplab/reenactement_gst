@@ -296,10 +296,15 @@ bool LivePortraitPipeline::processFrame(const void* in_data, void* out_data, int
     stitching_lip_engine->execute({{"input", gpu_feat_lip}}, {{"output", gpu_stitching_lip_out}});
     launch_add_deltas((float*)gpu_kp_rel, (float*)gpu_stitching_out, (float*)gpu_stitching_eye_out, (float*)gpu_stitching_lip_out, 21, stream);
 
+    // Corrected Dynamic Eye Retargeting (66 inputs: source face + params [ratio, gaze_x, gaze_y])
     if (enable_eye_retargeting) {
+        // Read back x_s to CPU to concatenate with params
         cudaMemcpyAsync(h_eye_params, x_s, 63 * sizeof(float), cudaMemcpyDeviceToHost, stream);
         cudaStreamSynchronize(stream);
-        h_eye_params[63] = s_eye_ratio[0]; h_eye_params[64] = s_eye_ratio[1]; h_eye_params[65] = eyes_open_ratio;
+        // Correct parameter mapping based on your architectural mandate: [ratio, gaze_x, gaze_y]
+        h_eye_params[63] = eyes_open_ratio;
+        h_eye_params[64] = gaze_x;
+        h_eye_params[65] = gaze_y;
         cudaMemcpyAsync(gpu_eye_params, h_eye_params, 66 * sizeof(float), cudaMemcpyHostToDevice, stream);
         eyeblink_engine->execute({{"input", gpu_eye_params}}, {{"output", gpu_eyeblink_delta}});
         launch_add_latent_delta((float*)gpu_kp_rel, (float*)gpu_eyeblink_delta, 21, eye_retargeting_strength, stream);
