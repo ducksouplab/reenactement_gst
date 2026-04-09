@@ -26,6 +26,11 @@ def process_liveportrait(
     eye_retargeting_strength=1.0,
     gaze_x=0.0,
     gaze_y=0.0,
+    enable_pose_offset=False,
+    pose_pitch_offset=0.0,
+    pose_yaw_offset=0.0,
+    pose_roll_offset=0.0,
+    side_by_side=False,
     docker_image="ducksouplab/liveportrait_gst:latest",
     verbose=False
 ):
@@ -56,19 +61,41 @@ def process_liveportrait(
             f"eye-retargeting-strength={eye_retargeting_strength} "
             f"gaze-x={gaze_x} gaze-y={gaze_y} "
         )
+    
+    pose_str = ""
+    if enable_pose_offset:
+        pose_str = (
+            f"enable-pose-offset=true "
+            f"pose-pitch-offset={pose_pitch_offset} "
+            f"pose-yaw-offset={pose_yaw_offset} "
+            f"pose-roll-offset={pose_roll_offset} "
+        )
 
-    # Robust decodebin branching pipeline
-    pipeline = (
-        f"filesrc location={docker_work}/{input_file} ! decodebin name=dec "
-        f"dec. ! queue max-size-buffers=1000 ! videoconvert ! "
-        f"videocrop left={crop_left} right={crop_right} ! "
-        f"videoscale ! video/x-raw,width=512,height=512,format=RGB ! "
-        f"liveportrait config-path={docker_config} source-image={docker_source}/{source_file} {eye_str}! "
-        f"videoconvert ! x264enc bitrate=2000 tune=zerolatency ! mux. "
-        f"dec. ! queue max-size-buffers=1000 ! audioconvert ! audioresample ! "
-        f"volume volume=1.5 ! avenc_aac bitrate=192000 ! aacparse ! mux. "
-        f"mp4mux name=mux faststart=true ! filesink location={docker_work}/{output_file}"
-    )
+    if side_by_side:
+        # Complex pipeline for side-by-side
+        pipeline = (
+            f"filesrc location={docker_work}/{input_file} ! decodebin name=dec "
+            f"dec. ! queue ! videoconvert ! tee name=t "
+            f"t. ! queue ! videocrop left={crop_left} right={crop_right} ! videoscale ! video/x-raw,width=512,height=512 ! mix.sink_0 "
+            f"t. ! queue ! videocrop left={crop_left} right={crop_right} ! videoscale ! video/x-raw,width=512,height=512,format=RGB ! "
+            f"liveportrait config-path={docker_config} source-image={docker_source}/{source_file} {eye_str}{pose_str}! "
+            f"videoconvert ! mix.sink_1 "
+            f"videomixer name=mix sink_1::xpos=512 ! videoconvert ! x264enc bitrate=2000 tune=zerolatency ! mux. "
+            f"dec. ! queue ! audioconvert ! audioresample ! avenc_aac bitrate=192000 ! aacparse ! mux. "
+            f"mp4mux name=mux faststart=true ! filesink location={docker_work}/{output_file}"
+        )
+    else:
+        # Standard pipeline
+        pipeline = (
+            f"filesrc location={docker_work}/{input_file} ! decodebin name=dec "
+            f"dec. ! queue ! videoconvert ! "
+            f"videocrop left={crop_left} right={crop_right} ! "
+            f"videoscale ! video/x-raw,width=512,height=512,format=RGB ! "
+            f"liveportrait config-path={docker_config} source-image={docker_source}/{source_file} {eye_str}{pose_str}! "
+            f"videoconvert ! x264enc bitrate=2000 tune=zerolatency ! mux. "
+            f"dec. ! queue ! audioconvert ! audioresample ! avenc_aac bitrate=192000 ! aacparse ! mux. "
+            f"mp4mux name=mux faststart=true ! filesink location={docker_work}/{output_file}"
+        )
 
     docker_cmd = [
         "docker", "run", "--rm", "--gpus", "all",
@@ -105,6 +132,11 @@ def main():
     parser.add_argument("--eye-retargeting-strength", type=float, default=1.0)
     parser.add_argument("--gaze-x", type=float, default=0.0)
     parser.add_argument("--gaze-y", type=float, default=0.0)
+    parser.add_argument("--enable-pose-offset", action="store_true")
+    parser.add_argument("--pose-pitch-offset", type=float, default=0.0)
+    parser.add_argument("--pose-yaw-offset", type=float, default=0.0)
+    parser.add_argument("--pose-roll-offset", type=float, default=0.0)
+    parser.add_argument("--side-by-side", action="store_true", help="Generate side-by-side comparison")
     parser.add_argument("--docker-image", default="ducksouplab/liveportrait_gst:latest")
     parser.add_argument("--verbose", action="store_true")
 
@@ -116,6 +148,9 @@ def main():
             plugin_path=args.plugin_path, crop_left=args.crop_left, crop_right=args.crop_right,
             enable_eye_retargeting=args.enable_eye_retargeting, eyes_open_ratio=args.eyes_open_ratio,
             eye_retargeting_strength=args.eye_retargeting_strength, gaze_x=args.gaze_x, gaze_y=args.gaze_y,
+            enable_pose_offset=args.enable_pose_offset, pose_pitch_offset=args.pose_pitch_offset,
+            pose_yaw_offset=args.pose_yaw_offset, pose_roll_offset=args.pose_roll_offset,
+            side_by_side=args.side_by_side,
             docker_image=args.docker_image, verbose=args.verbose
         )
         print(f"Success! Output saved to {args.output}")
