@@ -5,24 +5,25 @@ import math
 import time
 import sys
 import os
+import argparse
 
 # Enable debug logging
 os.environ["GST_DEBUG"] = "3,liveportrait:5"
 
 Gst.init(None)
 
-def run_nod_demo():
+def run_nod_demo(source_image, output_file):
     # Pipeline components
-    # Using Petter as source
     pipeline_str = (
-        "filesrc location=/work/video_example.mp4 ! decodebin name=dec "
-        "dec. ! queue ! videoconvert ! videocrop left=280 right=280 ! videoscale ! video/x-raw,width=512,height=512,format=RGB ! "
-        "liveportrait name=lp config-path=/checkpoints source-image=/source/Petter-Johansson.jpg enable-pose-offset=true ! "
-        "videoconvert ! x264enc bitrate=2000 tune=zerolatency ! mux. "
-        "dec. ! queue ! audioconvert ! audioresample ! lamemp3enc ! mpegaudioparse ! mux. "
-        "qtmux name=mux ! filesink location=/work/petter_nod_demo.mp4"
+        f"filesrc location=/work/video_example.mp4 ! decodebin name=dec "
+        f"dec. ! queue ! videoconvert ! videocrop left=280 right=280 ! videoscale ! video/x-raw,width=512,height=512,format=RGB ! "
+        f"liveportrait name=lp config-path=/checkpoints source-image={source_image} enable-pose-offset=true ! "
+        f"videoconvert ! x264enc bitrate=2000 tune=zerolatency ! mux. "
+        f"dec. ! queue ! audioconvert ! audioresample ! lamemp3enc ! mpegaudioparse ! mux. "
+        f"qtmux name=mux ! filesink location={output_file}"
     )
 
+    print(f"Running nod demo for {source_image} -> {output_file}")
     pipeline = Gst.parse_launch(pipeline_str)
     lp = pipeline.get_by_name("lp")
     
@@ -32,9 +33,9 @@ def run_nod_demo():
 
     loop = GLib.MainLoop()
 
-    # Modulation parameters - EXTREME for visibility
+    # Modulation parameters - Subtle for realism
     start_time = time.time()
-    amplitude = 0.6  # 0.6 radians ~ 34 degrees
+    amplitude = 0.2  # 0.2 radians ~ 11.5 degrees
     frequency = 1.0  # 1 nod per second
 
     def update_pose():
@@ -42,8 +43,6 @@ def run_nod_demo():
         # Sine wave for nodding (pitch)
         pitch_offset = amplitude * math.sin(2 * math.pi * frequency * elapsed)
         lp.set_property("pose-pitch-offset", pitch_offset)
-        # Print to stdout so we can see it in logs
-        print(f"Update: pitch_offset={pitch_offset:.4f}", flush=True)
         return True # Continue timer
 
     # Update every 33ms (~30fps)
@@ -65,16 +64,18 @@ def run_nod_demo():
 
     bus.connect("message", on_message)
 
-    print("Starting nodding demonstration...")
     pipeline.set_state(Gst.State.PLAYING)
-    
     try:
         loop.run()
     except KeyboardInterrupt:
         pass
 
     pipeline.set_state(Gst.State.NULL)
-    print("Done. Saved to petter_nod_demo.mp4")
+    print(f"Done. Saved to {output_file}")
 
 if __name__ == "__main__":
-    run_nod_demo()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--source", required=True)
+    parser.add_argument("--output", required=True)
+    args = parser.parse_args()
+    run_nod_demo(args.source, args.output)
